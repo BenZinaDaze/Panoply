@@ -275,16 +275,22 @@ func prepareAnimeTitle(title string) string {
 				name = name[1:]
 			}
 			if name != "" && strings.Contains(name, "/") {
-				last := strings.TrimSpace(strings.Split(name, "/")[len(strings.Split(name, "/"))-1])
-				first := strings.TrimSpace(strings.Split(name, "/")[0])
-				if last != "" {
+				parts := strings.Split(name, "/")
+				last := strings.TrimSpace(parts[len(parts)-1])
+				first := strings.TrimSpace(parts[0])
+				// 多语名（" / " 分隔）保留首个与末个，供中英名拆分；
+				// 无空格斜杠（如 [05/06] 进度标记）仍只留末段
+				if strings.Contains(name, " / ") && first != "" && last != "" {
+					titles = append(titles, lc+first+" / "+last)
+				} else if last != "" {
 					titles = append(titles, lc+last)
 				} else {
 					titles = append(titles, lc+first)
 				}
 			} else if name != "" {
 				if IsChinese(name) && !IsAllChinese(name) {
-					if !animeBracketNumRe.MatchString(name) {
+					// 含 SxxExx 记法的名称段不做混杂清洗，保留完整名称交给 anitomy 拆季集
+					if !animeBracketNumRe.MatchString(name) && !sxxExxRe.MatchString(name) {
 						name = strings.TrimSpace(animeMixedDigitRe.ReplaceAllString(name, ""))
 					}
 					if name == "" || isAllDigits(strings.TrimSpace(name)) {

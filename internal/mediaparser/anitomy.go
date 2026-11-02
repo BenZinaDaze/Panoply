@@ -49,6 +49,9 @@ var (
 	anitomyAudioRe = regexp.MustCompile(`(?i)(AAC(?:\d\.\d)?|FLAC|AC-?3|E-?AC-?3|DDP?[+]?2?\.?\d?|DTS(?:-HD)?(?:\s?MA)?|TrueHD|Atmos|Opus|MP3|PCM)`)
 	// 季
 	seasonTextRe = regexp.MustCompile(`(?i)(?:Season|S)\s*(\d{1,2})\b`)
+	// SxxExx 季集记法（CR WEB-DL 等剧集式番剧发布，如 S01E06 / S1E6 / S01E06v2）
+	sxxExxRe        = regexp.MustCompile(`(?i)\bS(\d{1,2})\s*E(\d{1,4}(?:\.5|v\d{1,2})?)\b`)
+	bracketSxxExxRe = regexp.MustCompile(`(?i)^S(\d{1,2})\s*E(\d{1,4}(?:\.5|v\d{1,2})?)$`)
 	// 年份
 	yearReAnitomy = regexp.MustCompile(`\b(19\d{2}|20\d{2})\b`)
 	// 类型
@@ -81,6 +84,12 @@ func classifyBracket(content string, r *AnitomyResult) bool {
 	// 第N话
 	if m := cnEpRe.FindStringSubmatch(content); m != nil {
 		r.EpisodeNumbers = append(r.EpisodeNumbers, m[1])
+		return true
+	}
+	// SxxExx 季集记法（如 [S01E06]）
+	if m := bracketSxxExxRe.FindStringSubmatch(content); m != nil {
+		r.AnimeSeasons = append(r.AnimeSeasons, m[1])
+		r.EpisodeNumbers = append(r.EpisodeNumbers, m[2])
 		return true
 	}
 	// 分辨率（可能混有其他词：WebRip 1080p HEVC-10bit AAC）
@@ -162,6 +171,12 @@ func AnitomyParse(title string) AnitomyResult {
 	// 第N话
 	if m := cnEpRe.FindStringSubmatch(freeText); m != nil {
 		r.EpisodeNumbers = append(r.EpisodeNumbers, m[1])
+		freeText = strings.TrimSpace(strings.Replace(freeText, m[0], "", 1))
+	}
+	// SxxExx 季集记法（须在 seasonTextRe 之前，否则 S01 后无词边界会被跳过）
+	if m := sxxExxRe.FindStringSubmatch(freeText); m != nil {
+		r.AnimeSeasons = append(r.AnimeSeasons, m[1])
+		r.EpisodeNumbers = append(r.EpisodeNumbers, m[2])
 		freeText = strings.TrimSpace(strings.Replace(freeText, m[0], "", 1))
 	}
 	// 季

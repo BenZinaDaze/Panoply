@@ -164,6 +164,46 @@ func TestMetaInfoAnimeDanglingBracket(t *testing.T) {
 	}
 }
 
+// SxxExx 剧集式季集记法（CR WEB-DL 等剧集式番剧发布常用），并回归既有记法。
+func TestMetaInfoAnimeSxxExx(t *testing.T) {
+	cases := []struct {
+		name, title, cn, en string
+		season, episode     int
+	}{
+		{"多语名+SxxExx", "[Nix-Raws] 装备我最强 / 裝備我最強 / テムパル～アイテムの力～ / Tempal Item no Chikara S01E06 [CR WEB-DL 1080p AVC AAC][简繁内封]", "装备我最强", "Tempal Item No Chikara", 1, 6},
+		{"多语名+SxxExx 集号递增", "[Nix-Raws] 装备我最强 / 裝備我最強 / テムパル～アイテムの力～ / Tempal Item no Chikara S01E12 [CR WEB-DL 1080p AVC AAC][简繁内封]", "装备我最强", "Tempal Item No Chikara", 1, 12},
+		{"单中文名+SxxExx", "[Group] 装备我最强 S01E06 [1080p]", "装备我最强", "", 1, 6},
+		{"日文名+SxxExx", "[Group] テムパル～アイテムの力～ S01E06 [CR WEB-DL 1080p]", "テムパル～アイテムの力～", "", 1, 6},
+		{"双语名+SxxExx", "[Neko] 葬送的芙莉莲 / Sousou no Frieren S01E28 [CR WEB-DL 1080p]", "葬送的芙莉莲", "Sousou No Frieren", 1, 28},
+		{"v2 后缀", "[Group] Title S02E13v2 [1080p][HEVC]", "", "Title", 2, 13},
+		{"短式 S1E6", "[Group] Title S1E6 [720p]", "", "Title", 1, 6},
+		{"带空格 S01 E06", "[Group] Title S01 E06 [1080p]", "", "Title", 1, 6},
+		{"括号内 [S01E06]", "[Group] Title [S01E06][1080p]", "", "Title", 1, 6},
+		// 既有记法回归
+		{"双语名+dash 集号", "[LoliHouse] 我独自升级 / Solo Leveling - 05 [WebRip 1080p HEVC-10bit][简繁字幕]", "我独自升级", "Solo Leveling", 0, 5},
+		{"中文第二季+括号集号", "[桜都字幕组] 关于邻家的天使大人 第二季 [05][1080p][简繁内封].mkv", "关于邻家的天使大人", "", 2, 5},
+	}
+	for _, c := range cases {
+		meta := MetaInfo(c.title, "", true, nil, nil)
+		if meta.CnName != c.cn || meta.EnName != c.en {
+			t.Errorf("%s: cn=%q en=%q, want %q/%q", c.name, meta.CnName, meta.EnName, c.cn, c.en)
+		}
+		gotS, gotE := 0, 0
+		if meta.BeginSeason != nil {
+			gotS = *meta.BeginSeason
+		}
+		if meta.BeginEpisode != nil {
+			gotE = *meta.BeginEpisode
+		}
+		if gotS != c.season || gotE != c.episode {
+			t.Errorf("%s: season=%d episode=%d, want %d/%d", c.name, gotS, gotE, c.season, c.episode)
+		}
+		if meta.Type != MediaTV {
+			t.Errorf("%s: type=%v, want TV", c.name, meta.Type)
+		}
+	}
+}
+
 // 西式圆括号分辨率应被提取，集号在 () 之前也应识别。
 func TestMetaInfoAnimeParenResolution(t *testing.T) {
 	meta := MetaInfo("[SubsPlease] Frieren - 12 (1080p) [04B6C9EE].mkv", "", true, nil, nil)
