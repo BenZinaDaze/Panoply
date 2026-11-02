@@ -8,7 +8,7 @@
 > 注：早期 v1.0.2 ~ v1.1.7 的原始提交历史曾被重写（快照式平行历史），
 > 其条目由版本树比对还原；实际功能均已包含于主线 v1.1.8 及之后版本。
 
-## [v2.8.0] - 2026-10-30
+## [v2.8.0] - 2026-11-02
 
 ### 🏷️ 项目更名 Meta2Cloud → Panoply
 
@@ -16,6 +16,16 @@
 - 存量用户迁移：Docker 用户将镜像与容器名改为 `benz1/panoply`、数据卷 `panoply-config`（沿用原目录内容即可）；二进制用户改用 `./panoply serve`
 - 历史镜像 `benz1/meta2cloud` 各版本保留可拉取；`docker-compose.gdrive.yml` 的 v1.3.1 仍指向旧名镜像（Docker Hub 上仅存的历史发布）
 - GitHub 仓库同步更名为 `BenZinaDaze/Panoply`，旧地址自动重定向
+
+### 🐛 修复
+
+- 品牌字标 Meta2Cloud → Panoply（侧栏/顶栏/登录页；拆分 span 致全量检索遗漏） (`ac056d2`)
+- favicon 更新为 Panoply 潮汐标识，移除未使用的 icons.svg 模板遗留 (`edf519f`)
+- 搜索页复制 RSS/链接在内网 HTTP 访问时无效 (`9e3de85`)
+
+### ♻️ 优化重构
+
+- 潮汐图标工艺优化——渐变对齐 tide 令牌、16px 双波不糊连、星点放大提亮、副波居中修正 (`1cc0dca`)
 
 ### 🧹 杂项
 
