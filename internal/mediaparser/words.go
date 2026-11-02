@@ -155,8 +155,8 @@ func applyReplace(title, word string) (string, bool) {
 	if err != nil {
 		newTitle = strings.ReplaceAll(title, oldW, newW)
 	} else {
-		// 兼容 Python 风格 \1 捕获组引用（用 ${1} 界定组名，避免与后续字符粘连）
-		newTitle = re.ReplaceAllString(title, backrefRe.ReplaceAllString(newW, "$${1}"))
+		// 兼容 Python 风格 \1 捕获组引用（\N → ${N}，用花括号界定组名，避免与后续字符粘连）
+		newTitle = re.ReplaceAllString(title, backrefRe.ReplaceAllString(newW, "$${$1}"))
 	}
 	return newTitle, newTitle != title
 }

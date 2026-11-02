@@ -351,6 +351,11 @@ func TestWordsMatcherBackrefCompat(t *testing.T) {
 	if out != "新名12集" || len(applied) == 0 {
 		t.Errorf(`\1 引用未生效: %q applied=%v`, out, applied)
 	}
+	// \2 及以上应取各自捕获组的值（曾全部展开成第 1 组）
+	out2, _ := NewWordsMatcher([]string{`S(\d{2})E(\d{2})\b => S\1 - \2`}).Prepare("X S01E06")
+	if out2 != "X S01 - 06" {
+		t.Errorf(`\2 引用未生效: %q`, out2)
+	}
 }
 
 // 屏蔽词支持正则；# 注释行跳过。
