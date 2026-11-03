@@ -87,20 +87,30 @@ func TestAniBTSearchAndEpisodes(t *testing.T) {
 			// 真实接口的 bgmId 为数字，同时保留字符串形式覆盖兼容分支
 			w.Write([]byte(`{"data": [{"bgmId": 42, "nameCn": "测试番", "image": "/cover.jpg"}, {"bgmId": "77", "nameCn": "字符串ID番"}]}`))
 		case r.URL.Path == "/api/anime/groups":
-			w.Write([]byte(`[{"group": {"slug": "sub-a", "name": "组A"}}]`))
+			// 2026-10 起线上为对象结构：data 内嵌 groups 数组（每组含 items 最近资源）
+			if r.URL.Query().Get("bgmId") == "77" {
+				// 旧顶层数组结构保留兼容覆盖
+				w.Write([]byte(`[{"group": {"slug": "sub-b", "name": "组B"}}]`))
+				return
+			}
+			w.Write([]byte(`{"ok": true, "data": {"bgmId": 42, "animeId": "nh7xxx", "title": {"primary": "测试番"}, "groups": [
+				{"groupId": "org_a", "slug": "sub-a", "name": "组A", "status": "ACTIVE", "totalReleases": 3,
+				 "items": [{"releaseId": "rel_1", "title": "测试番 - 01", "magnet": "magnet:?xt=urn:btih:0000"}]}
+			], "total": 1}}`))
 		case strings.HasPrefix(r.URL.Path, "/rss/anime.xml"):
-			// 模拟真实 anibt 结构：infohash 嵌套在 <anibt:torrent> 容器内
+			// 模拟真实 anibt 结构：infohash 嵌套在 <torrent> 容器内（2026-10 起无 anibt: 前缀、自带 xmlns）
 			w.Write([]byte(`<?xml version="1.0"?>
 				<rss xmlns:anibt="https://anibt.net/xmlns/rss/1.0/"><channel>
 				<item>
 					<title>测试番 - 02</title>
 					<pubDate>Tue, 13 Oct 2026 08:00:00 GMT</pubDate>
-					<link>https://anibt.net/anime/42</link>
+					<link>https://anibt.net/release/rel_xxx</link>
+					<anibt:torrentUrl>https://anibt.net/api/torrent/rel_xxx.torrent</anibt:torrentUrl>
 					<enclosure url="https://anibt.net/api/torrent/rel_xxx.torrent" length="104857600" type="application/x-bittorrent"/>
-					<anibt:torrent>
-						<link>https://anibt.net/anime/42</link>
+					<torrent xmlns="https://anibt.moe/xmlns/0.1/">
+						<link>https://anibt.net/release/rel_xxx</link>
 						<infohash>e1ddc119073b1609863eae79ce26713375dd3787</infohash>
-					</anibt:torrent>
+					</torrent>
 				</item>
 				<item>
 					<title>测试番 - 01</title>
@@ -123,17 +133,20 @@ func TestAniBTSearchAndEpisodes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(items) != 4 { // 数字 bgmId 42 + 字符串 bgmId "77"，各 (全部) + [组A]
+	if len(items) != 4 { // 数字 bgmId 42 + 字符串 bgmId "77"，各 (全部) + 字幕组项
 		t.Fatalf("items = %d: %+v", len(items), items)
 	}
 	if items[0].MediaID != "42" {
 		t.Errorf("数字 bgmId 应解析为 \"42\": items[0] = %+v", items[0])
 	}
-	if items[1].SubgroupID != "sub-a" {
-		t.Errorf("items[1] = %+v", items[1])
+	if items[1].SubgroupID != "sub-a" || items[1].SubgroupName != "组A" {
+		t.Errorf("新结构（data.groups[]）字幕组应解析: items[1] = %+v", items[1])
 	}
 	if items[2].MediaID != "77" {
 		t.Errorf("字符串 bgmId 应解析为 \"77\": items[2] = %+v", items[2])
+	}
+	if items[3].SubgroupID != "sub-b" || items[3].SubgroupName != "组B" {
+		t.Errorf("旧结构（顶层数组嵌套 group）字幕组应解析: items[3] = %+v", items[3])
 	}
 
 	episodes, err := spider.GetEpisodes("42", "")
@@ -143,7 +156,7 @@ func TestAniBTSearchAndEpisodes(t *testing.T) {
 	if len(episodes) != 2 {
 		t.Fatalf("episodes = %d", len(episodes))
 	}
-	// 第 1 条：infohash 嵌套在 <anibt:torrent> 内，应递归取到并生成 magnet
+	// 第 1 条：infohash 嵌套在 <torrent> 容器内（自带 xmlns、无前缀），应递归取到并生成 magnet
 	if episodes[0].MagnetURL != "magnet:?xt=urn:btih:e1ddc119073b1609863eae79ce26713375dd3787" {
 		t.Errorf("magnet = %q", episodes[0].MagnetURL)
 	}

@@ -221,7 +221,8 @@ func (s *AniBTSpider) BuildRssURL(mediaID, subgroupID string) string {
 
 // collectItemExtTexts 按文档顺序收集每个 <item> 子树内全部后代元素的
 // local 名 → 首个非空文本。encoding/xml 的 `,any` 只匹配直接子元素，
-// 而 AniBT 把 infohash 嵌套在 <anibt:torrent> 容器内
+// 而 AniBT 把 infohash 嵌套在 <torrent> 容器内（2026-10 前为
+// <anibt:torrent>，按 local 名解析两种形态皆可）
 // （对应 Python 版 item.iter() 的递归语义）。
 func collectItemExtTexts(body []byte) []map[string]string {
 	decoder := xml.NewDecoder(bytes.NewReader(body))
