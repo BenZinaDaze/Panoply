@@ -50,7 +50,8 @@ func (s *AniBTSpider) RssHosts() []string { return []string{"anibt.net"} }
 // SetTestBaseURL 覆盖基础地址（仅测试使用）。
 func (s *AniBTSpider) SetTestBaseURL(baseURL string) { s.baseURL = baseURL }
 
-// requestWithRetry 抓取 JSON/RSS：3 次尝试、2s 固定间隔、4MB 体积上限（httpx.Fetch）。
+// requestWithRetry 抓取 JSON/RSS：3 次尝试、默认 2s 间隔（429/503 按
+// Retry-After 封顶等待、确定性 4xx 短路）、4MB 体积上限（httpx.Fetch）。
 func (s *AniBTSpider) requestWithRetry(rawURL string) ([]byte, error) {
 	return httpx.Fetch(s.hc, rawURL, httpx.FetchOptions{
 		Headers: map[string]string{

@@ -1,7 +1,8 @@
 // Package httpx 共享的 HTTP 客户端基础设施：请求节流（最小间隔 + 429 冷却）
-// 与带重试的 GET 抓取。收敛此前散落在 scraper（两套逐行重复的 requestWithRetry）
+// 与带重试的 GET 抓取（确定性 4xx 短路、429/5xx 按 Retry-After 等待）。
+// 收敛此前散落在 scraper（两套逐行重复的 requestWithRetry）
 // 与 u115/trakt（同构的单桶预约限速器）的手写实现，让外部请求行为有单一参照。
-// 定制语义较深的客户端（如 tmdb 的 404 短路 / JSON 重试）保留自有循环，不强迁。
+// 定制语义较深的客户端（如 tmdb 的 JSON 解析重试）保留自有循环，不强迁。
 package httpx
 
 import (
@@ -9,6 +10,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
@@ -100,9 +103,35 @@ type FetchOptions struct {
 	MaxBodyBytes int64
 }
 
-// Fetch 执行 GET：网络错误、非 2xx、响应体超限均按固定间隔重试，
-// 返回最后一次的错误与空 body。适合爬虫/RSS 类只读抓取；需要按状态码
-// 定制语义（404 短路、429 冷却等）的客户端不适用，应保留自有循环。
+// maxRetryAfterWait Retry-After 指示的等待上限：尊重服务端限流要求的同时，
+// 避免异常大的值长时间阻塞调用方。var 仅为测试可缩短。
+var maxRetryAfterWait = 10 * time.Second
+
+// retryableStatus 判断失败状态码是否值得重试：408/429 与全部 5xx 重试；
+// 其余 4xx 属确定性失败（参数错误、未授权、不存在等），重试不可能自愈。
+func retryableStatus(code int) bool {
+	if code == http.StatusRequestTimeout || code == http.StatusTooManyRequests {
+		return true
+	}
+	return code >= 500
+}
+
+// retryAfterDelay 解析 Retry-After 头（仅支持秒数形式，AniBT 等站点采用），
+// 返回封顶后的等待时长；缺失或无法解析时 ok=false。
+func retryAfterDelay(header string) (time.Duration, bool) {
+	secs, err := strconv.Atoi(strings.TrimSpace(header))
+	if err != nil || secs < 0 {
+		return 0, false
+	}
+	d := time.Duration(secs) * time.Second
+	return min(d, maxRetryAfterWait), true
+}
+
+// Fetch 执行 GET：网络错误、响应体超限、可重试的非 2xx（408/429 与 5xx）
+// 按间隔重试；其余 4xx 立即失败不重试。响应带 Retry-After（秒）时以其
+// 指示的等待为准（封顶 maxRetryAfterWait，且不小于默认间隔）。
+// 返回最后一次的错误与空 body。适合爬虫/RSS 类只读抓取；需要按响应体
+// 定制语义的客户端不适用，应保留自有循环。
 func Fetch(client *http.Client, rawURL string, opts FetchOptions) ([]byte, error) {
 	maxAttempts := opts.MaxAttempts
 	if maxAttempts <= 0 {
@@ -121,13 +150,26 @@ func Fetch(client *http.Client, rawURL string, opts FetchOptions) ([]byte, error
 		for k, v := range opts.Headers {
 			req.Header.Set(k, v)
 		}
+		wait := delay
 		resp, err := client.Do(req)
 		if err == nil {
 			if resp.StatusCode >= 400 {
 				resp.Body.Close()
 				lastErr = fmt.Errorf("HTTP %d: %s", resp.StatusCode, rawURL)
+				if !retryableStatus(resp.StatusCode) {
+					return nil, lastErr
+				}
+				if d, ok := retryAfterDelay(resp.Header.Get("Retry-After")); ok && d > wait {
+					wait = d
+				}
 			} else {
-				body, readErr := io.ReadAll(io.LimitReader(resp.Body, opts.MaxBodyBytes+1))
+				// MaxBodyBytes<=0 表示不限；此前 LimitReader(body, 0+1) 会把
+				// 不设上限的响应静默截断成 1 字节。
+				var reader io.Reader = resp.Body
+				if opts.MaxBodyBytes > 0 {
+					reader = io.LimitReader(resp.Body, opts.MaxBodyBytes+1)
+				}
+				body, readErr := io.ReadAll(reader)
 				resp.Body.Close()
 				if readErr == nil && opts.MaxBodyBytes > 0 && int64(len(body)) > opts.MaxBodyBytes {
 					readErr = fmt.Errorf("响应超过大小上限（%dMB）", opts.MaxBodyBytes>>20)
@@ -142,7 +184,7 @@ func Fetch(client *http.Client, rawURL string, opts FetchOptions) ([]byte, error
 			lastErr = err
 		}
 		if attempt < maxAttempts-1 {
-			time.Sleep(delay)
+			time.Sleep(wait)
 		}
 	}
 	return nil, lastErr

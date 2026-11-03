@@ -48,7 +48,8 @@ func (s *MikanSpider) RssHosts() []string { return []string{"mikanani.me", "mika
 // SetTestBaseURL 覆盖基础地址（仅测试使用）。
 func (s *MikanSpider) SetTestBaseURL(baseURL string) { s.baseURL = baseURL }
 
-// requestWithRetry 抓取页面：3 次尝试、2s 固定间隔、4MB 体积上限（httpx.Fetch）。
+// requestWithRetry 抓取页面：3 次尝试、默认 2s 间隔（429/503 按
+// Retry-After 封顶等待、确定性 4xx 短路）、4MB 体积上限（httpx.Fetch）。
 func (s *MikanSpider) requestWithRetry(url string) (string, []byte, error) {
 	body, err := httpx.Fetch(s.hc, url, httpx.FetchOptions{
 		Headers:      map[string]string{"User-Agent": mikanUA},
