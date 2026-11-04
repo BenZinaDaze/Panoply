@@ -388,7 +388,7 @@ export default function LibraryPage({
       <PageHeader
         kicker="Cinematic catalog"
         title={pageTitle}
-        description="浏览网盘媒体库中的电影与剧集元数据，支持检索、刷新与季集完整度查看。"
+        description="浏览网盘媒体库中的电影与剧集元数据，支持检索、刷新与季集完整度查看；卡片上的观看进度来自 Plex，约 15 分钟刷新。"
         actions={
           <>
             <Select

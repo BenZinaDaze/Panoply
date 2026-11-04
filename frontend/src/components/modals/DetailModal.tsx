@@ -124,6 +124,9 @@ export default function DetailModal({
   if (!item) return null
 
   const isTV = item.media_type === 'tv'
+  // Plex 观看进度（后端叠加；未配置 Plex 时字段缺席，不渲染）
+  const watchTotal = item.total_episodes || item.in_library_episodes || 0
+  const watchedAll = isTV && watchTotal > 0 && (item.watched_episodes ?? 0) >= watchTotal
   const summaryPairs = [
     item.year ? ['年份', item.year] : null,
     (item as MediaItem & { genre_names?: string[] }).genre_names?.length
@@ -198,6 +201,14 @@ export default function DetailModal({
                 <Badge variant="success">
                   {item.in_library_episodes}/{item.total_episodes || '?'} 集已入库
                 </Badge>
+              )}
+              {isTV && (item.watched_episodes ?? 0) > 0 && (
+                <Badge variant={watchedAll ? 'success' : 'info'}>
+                  {watchedAll ? '已看完' : `已看 ${item.watched_episodes}/${watchTotal} 集`}
+                </Badge>
+              )}
+              {!isTV && item.plex_watched && (
+                <Badge variant="success">已看</Badge>
               )}
               {!isTV && item.in_library && (
                 <Badge variant="success">已入库</Badge>

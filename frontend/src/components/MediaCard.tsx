@@ -1,4 +1,4 @@
-import { Film, Tv, Star } from 'lucide-react'
+import { Film, Tv, Star, Check } from 'lucide-react'
 import type { MediaItem } from '@/types/api'
 
 interface MediaCardProps {
@@ -13,6 +13,9 @@ export default function MediaCard({ item, onClick, compact = false, style }: Med
   const pct = isTV && item.total_episodes && item.total_episodes > 0 && item.in_library_episodes !== undefined
     ? Math.round(item.in_library_episodes / item.total_episodes * 100)
     : null
+  // Plex 观看进度（后端叠加；未配置 Plex 时字段缺席，不渲染）
+  const watchTotal = item.total_episodes || item.in_library_episodes || 0
+  const watchedAll = isTV && watchTotal > 0 && (item.watched_episodes ?? 0) >= watchTotal
 
   return (
     <div
@@ -47,6 +50,28 @@ export default function MediaCard({ item, onClick, compact = false, style }: Med
         <div className="absolute left-2 top-2 rounded-full bg-black/55 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-white/90 backdrop-blur-md">
           {isTV ? 'TV' : '电影'}
         </div>
+
+        {(isTV ? (item.watched_episodes ?? 0) > 0 : item.plex_watched) && (
+          <div
+            title="来自 Plex 的观看进度"
+            className={`absolute bottom-2 left-2 flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold backdrop-blur-md ${
+              watchedAll
+                ? 'border border-success/40 bg-success/15 text-success'
+                : 'bg-black/55 text-white/90'
+            }`}
+          >
+            {watchedAll ? (
+              <>
+                <Check className="size-2.5" />
+                已看完
+              </>
+            ) : isTV ? (
+              `已看 ${item.watched_episodes}/${watchTotal}`
+            ) : (
+              '已看'
+            )}
+          </div>
+        )}
 
         {isTV && pct !== null && pct > 0 && (
           <div className="absolute bottom-0 left-0 right-0 h-1 bg-black/40">

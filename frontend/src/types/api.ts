@@ -12,6 +12,8 @@ export interface MediaItem {
   seasons?: SeasonStatus[]
   total_episodes?: number
   in_library_episodes?: number
+  watched_episodes?: number
+  plex_watched?: boolean
   status?: string
   drive_folder_id?: string
   updated_at?: string
