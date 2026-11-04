@@ -687,6 +687,8 @@ func (s *Server) handleTmdbDetail(w http.ResponseWriter, r *http.Request) {
 	libStore := s.rt.GetLibraryStore()
 	joined := libStore.GetJoinedMediaItem(mediaType, tmdbID)
 	if joined != nil && (mediaType != "tv" || joined["seasons"] != nil) {
+		// 入库条目：叠加 Plex 观看进度（详情弹窗的徽标数据）
+		s.rt.watchSvc.AnnotateRow(joined)
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "detail": joined})
 		return
 	}

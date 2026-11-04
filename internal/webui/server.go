@@ -402,6 +402,10 @@ func (s *Server) handleGetLibrary(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
+	// 叠加 Plex 观看进度（未配置 Plex 时 EnsureFresh 即返回、Annotate 零注入）
+	s.rt.watchSvc.EnsureFresh(r.Context())
+	s.rt.watchSvc.Annotate(snap.Movies)
+	s.rt.watchSvc.Annotate(snap.TvShows)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"movies":       snap.Movies,
 		"tv_shows":     snap.TvShows,

@@ -68,6 +68,9 @@ type Runtime struct {
 	// ── 媒体库扫描服务（见 libraryscan.go）──
 	librarySvc *libraryService
 
+	// ── Plex 观看进度叠加服务（见 watchstatus.go）──
+	watchSvc *watchStatusService
+
 	// ── 观看同步服务（见 traktservice.go）──
 	traktSvc *traktService
 
@@ -167,6 +170,7 @@ func InitRuntime(rootDir string) *Runtime {
 	}
 	rt.pipelineSvc = &pipelineService{rt: rt}
 	rt.librarySvc = &libraryService{rt: rt}
+	rt.watchSvc = &watchStatusService{rt: rt}
 	rt.strmSvc = &strmService{
 		rt:            rt,
 		strmLinkCache: &directLinkCache{entries: map[string]directLink{}},

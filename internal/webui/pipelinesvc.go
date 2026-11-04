@@ -2,6 +2,7 @@
 package webui
 
 import (
+	"context"
 	"crypto/subtle"
 	"fmt"
 	"log"
@@ -261,6 +262,10 @@ func (s *Server) handleRefreshLibrary(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 	diff := s.rt.librarySvc.RefreshLibrary(!full)
+	// 用户主动刷新：同步重拉观看进度，徽标即时可见（失败不影响库刷新结果）
+	ctx, cancel := context.WithTimeout(context.Background(), watchStatusForceWait)
+	s.rt.watchSvc.Refresh(ctx)
+	cancel()
 	s.rt.appLog("library", "refresh_scan_finish", "SUCCESS", "媒体库刷新完成", diff)
 	writeJSON(w, http.StatusOK, diff)
 }
