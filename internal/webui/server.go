@@ -210,12 +210,25 @@ func (s *Server) handleRoot(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
+	// 缓存策略：/assets/ 为内容哈希文件可长缓存；其余（index.html / SPA 路由）
+	// 必须 no-cache，保证前端重新构建后浏览器立刻拿到新的资源引用
+	if strings.HasPrefix(r.URL.Path, "/assets/") {
+		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+	} else {
+		w.Header().Set("Cache-Control", "no-cache")
+	}
 	// 已存在的文件直接返回，其余回退 index.html（SPA 路由）
 	path := filepath.Clean(strings.TrimPrefix(r.URL.Path, "/"))
 	if path == "." {
 		path = "index.html"
 	}
 	if _, err := os.Stat(filepath.Join(s.rt.RootDir, "frontend", "dist", path)); err != nil {
+		// 带扩展名的路径是静态资源（如重建后已不存在的旧 hash chunk），
+		// 回退 index.html 会以 text/html 响应 JS 请求导致浏览器 MIME 校验失败，直接 404
+		if filepath.Ext(path) != "" {
+			http.NotFound(w, r)
+			return
+		}
 		// SPA 回退
 		data, err := os.ReadFile(filepath.Join(s.rt.RootDir, "frontend", "dist", "index.html"))
 		if err != nil {
@@ -223,6 +236,7 @@ func (s *Server) handleRoot(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-cache")
 		_, _ = w.Write(data)
 		return
 	}
