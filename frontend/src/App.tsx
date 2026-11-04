@@ -1,29 +1,30 @@
-import { Suspense, lazy, useState, useEffect, useCallback } from 'react'
+import { Suspense, useState, useEffect, useCallback } from 'react'
 import { BrowserRouter, Routes, Route, Navigate, useNavigate, useLocation, useParams, useSearchParams } from 'react-router'
 import { setUnauthorizedHandler, getMe, getU115OauthStatus, refreshLibrary } from './api'
 import type { MediaItem } from '@/types/api'
 import { Toaster } from '@/components/ui/sonner'
+import { loadable } from '@/lib/chunkReload'
 import Sidebar from '@/components/layout/Sidebar'
 import Topbar from '@/components/layout/Topbar'
 import MobileNav from '@/components/layout/MobileNav'
 
-const LoginPage = lazy(() => import('@/components/pages/LoginPage'))
-const DashboardPage = lazy(() => import('@/components/pages/DashboardPage'))
-const LibraryPage = lazy(() => import('@/components/pages/LibraryPage'))
-const ConfigPage = lazy(() => import('@/components/pages/ConfigPage'))
-const FileManagerPage = lazy(() => import('@/components/pages/FileManagerPage'))
-const CalendarPage = lazy(() => import('@/components/pages/CalendarPage'))
-const SubscriptionsPage = lazy(() => import('@/components/pages/SubscriptionsPage'))
-const LogsPage = lazy(() => import('@/components/pages/LogsPage'))
-const IngestHistoryPage = lazy(() => import('@/components/pages/IngestHistoryPage'))
-const U115OfflinePage = lazy(() => import('@/components/pages/U115OfflinePage'))
-const ScraperSearch = lazy(() => import('@/components/pages/ScraperSearch'))
-const StrmSyncPage = lazy(() => import('@/components/pages/StrmSyncPage'))
-const StrmPlaybackPage = lazy(() => import('@/components/pages/StrmPlaybackPage'))
-const WatchedSyncPage = lazy(() => import('@/components/pages/WatchedSyncPage'))
-const TitlePinsPage = lazy(() => import('@/components/pages/TitlePinsPage'))
-const CategoriesPage = lazy(() => import('@/components/pages/CategoriesPage'))
-const ParseTestModal = lazy(() => import('@/components/modals/ParseTestModal'))
+const LoginPage = loadable(() => import('@/components/pages/LoginPage'))
+const DashboardPage = loadable(() => import('@/components/pages/DashboardPage'))
+const LibraryPage = loadable(() => import('@/components/pages/LibraryPage'))
+const ConfigPage = loadable(() => import('@/components/pages/ConfigPage'))
+const FileManagerPage = loadable(() => import('@/components/pages/FileManagerPage'))
+const CalendarPage = loadable(() => import('@/components/pages/CalendarPage'))
+const SubscriptionsPage = loadable(() => import('@/components/pages/SubscriptionsPage'))
+const LogsPage = loadable(() => import('@/components/pages/LogsPage'))
+const IngestHistoryPage = loadable(() => import('@/components/pages/IngestHistoryPage'))
+const U115OfflinePage = loadable(() => import('@/components/pages/U115OfflinePage'))
+const ScraperSearch = loadable(() => import('@/components/pages/ScraperSearch'))
+const StrmSyncPage = loadable(() => import('@/components/pages/StrmSyncPage'))
+const StrmPlaybackPage = loadable(() => import('@/components/pages/StrmPlaybackPage'))
+const WatchedSyncPage = loadable(() => import('@/components/pages/WatchedSyncPage'))
+const TitlePinsPage = loadable(() => import('@/components/pages/TitlePinsPage'))
+const CategoriesPage = loadable(() => import('@/components/pages/CategoriesPage'))
+const ParseTestModal = loadable(() => import('@/components/modals/ParseTestModal'))
 
 function PageFallback() {
   return (
