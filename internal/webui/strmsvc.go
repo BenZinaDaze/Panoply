@@ -259,7 +259,7 @@ func (s *strmService) runStrmSync(trigger string) {
 	}
 	// 保守原则：任一映射遍历失败时跳过孤儿对账等删除类操作，宁可不删不误删
 	if syncErr == nil {
-		stats.Removed += s.sweepOrphanStrmFiles(st, cfg.Strm.Mappings, runID)
+		stats.Removed += s.sweepOrphanStrmFiles(st, cfg, cfg.Strm.Mappings, runID)
 	}
 	st.FinishSyncRun(runID, stats.Created, stats.Updated, stats.Removed, stats.Skipped, s.errText(syncErr))
 	log.Printf("[strm] 同步完成（%s）：新增 %d 更新 %d 删除 %d 跳过 %d",
@@ -352,10 +352,10 @@ func (s *strmService) notifyPlexRefresh(changed int, changes *strmChanges) {
 // ch 非 nil 时同时记录变更文件命中的分类名。
 func (s *strmService) syncMapping(provider cloudfile.Provider, st *store.StrmStore, cfg *config.Config, mapping config.StrmMapping, runID int64, ch *strmChanges) (created, updated, removed, skipped int, err error) {
 	extSet := strmMediaExtSet(cfg)
-	sidecarSet := map[string]struct{}{}
+	// 伴随文件扩展名集合用于统计分类（不计入同步数字，明细仍逐条记录），与是否开启下载无关
+	sidecarSet := strmSidecarExtSet(cfg)
 	var fetcher sidecarFetcher
 	if cfg.Strm.FetchSidecar {
-		sidecarSet = strmSidecarExtSet(cfg)
 		if f, ok := provider.(sidecarFetcher); ok {
 			fetcher = f
 		}
@@ -416,15 +416,11 @@ func (s *strmService) syncMapping(provider cloudfile.Provider, st *store.StrmSto
 					continue
 				}
 				localPath := s.sidecarLocalPath(localRoot, relPath, item.Name)
+				// 伴随文件不计入同步统计（数字只反映 .strm）；
+				// 变更仍触发通知——外部字幕需媒体服务器重新扫库才会被识别
 				switch s.upsertSidecarFile(st, item, relPath, pickCode, localPath, fetcher, runID) {
-				case "created":
-					created++
+				case "created", "updated":
 					ch.add(relPath)
-				case "updated":
-					updated++
-					ch.add(relPath)
-				default:
-					skipped++
 				}
 				seen[localPath] = true
 			}
@@ -446,7 +442,10 @@ func (s *strmService) syncMapping(provider cloudfile.Provider, st *store.StrmSto
 		}
 		st.DeleteStrmFile(rec.ID)
 		st.InsertSyncFileDetail(runID, rec.FileName, rec.PanPath, rec.LocalPath, "removed", true, "")
-		removed++
+		ext := strings.TrimPrefix(path.Ext(rec.FileName), ".")
+		if _, isSidecar := sidecarSet[ext]; !isSidecar {
+			removed++ // 伴随文件的清理不计入统计
+		}
 		ch.add(strings.TrimPrefix(rec.LocalPath, localRoot+string(os.PathSeparator)))
 	}
 
@@ -477,7 +476,7 @@ func (s *strmService) pruneEmptyDirs(root string) {
 // sweepOrphanStrmFiles 全局孤儿对账：不属于任何映射本地根的记录
 // （历史映射位置变更后的残留）删除本地文件与记录，返回清理数量。
 // 每次同步末尾执行，映射换位置后下一次同步即自动清干净。
-func (s *strmService) sweepOrphanStrmFiles(st *store.StrmStore, mappings []config.StrmMapping, runID int64) int {
+func (s *strmService) sweepOrphanStrmFiles(st *store.StrmStore, cfg *config.Config, mappings []config.StrmMapping, runID int64) int {
 	roots := make([]string, 0, len(mappings))
 	for _, m := range mappings {
 		if root := filepath.Clean(m.LocalPath); root != "" && root != "." {
@@ -488,6 +487,7 @@ func (s *strmService) sweepOrphanStrmFiles(st *store.StrmStore, mappings []confi
 	if len(roots) == 0 {
 		return 0
 	}
+	sidecarSet := strmSidecarExtSet(cfg)
 	removed := 0
 	for _, rec := range st.ListAllStrmFiles() {
 		if s.isUnderAnyLocalRoot(rec.LocalPath, roots) {
@@ -501,7 +501,10 @@ func (s *strmService) sweepOrphanStrmFiles(st *store.StrmStore, mappings []confi
 		st.DeleteStrmFile(rec.ID)
 		st.InsertSyncFileDetail(runID, rec.FileName, rec.PanPath, rec.LocalPath, "removed", true, "")
 		log.Printf("[strm] 清理映射外残留：%s", rec.LocalPath)
-		removed++
+		ext := strings.TrimPrefix(path.Ext(rec.FileName), ".")
+		if _, isSidecar := sidecarSet[ext]; !isSidecar {
+			removed++ // 伴随文件的清理不计入统计
+		}
 	}
 	return removed
 }
@@ -717,15 +720,10 @@ func (s *strmService) HandleVideoIngested(result pipeline.ProcessResult) error {
 					continue
 				}
 				sideLocal := s.sidecarLocalPath(localRoot, relPath, item.Name)
+				// 伴随文件不计入 STRM 统计；变更仍触发扫库通知（外部字幕需扫描才会被识别）
 				switch s.upsertSidecarFile(st, item, relPath, sidePickCode, sideLocal, fetcher, s.rt.strmSvc.hookRunID) {
-				case "created":
-					s.rt.strmSvc.hookStats.Created++
+				case "created", "updated":
 					s.rt.strmSvc.hookChanges.add(relPath)
-				case "updated":
-					s.rt.strmSvc.hookStats.Updated++
-					s.rt.strmSvc.hookChanges.add(relPath)
-				default:
-					s.rt.strmSvc.hookStats.Skipped++
 				}
 			}
 		}

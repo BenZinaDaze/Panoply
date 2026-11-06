@@ -586,8 +586,9 @@ func TestSyncSidecarFlow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("首次同步失败：%v", err)
 	}
-	if created != 3 {
-		t.Fatalf("首次同步应产出 strm+字幕+图片 3 项，实际 %d", created)
+	// 统计只反映 .strm；字幕/图片照常下载但不计入
+	if created != 1 {
+		t.Fatalf("首次同步统计应只含 1 个 strm，实际 %d", created)
 	}
 	if n := fetchCount.Load(); n != 2 {
 		t.Fatalf("应下载 2 个伴随文件，实际 %d", n)
@@ -600,27 +601,28 @@ func TestSyncSidecarFlow(t *testing.T) {
 		t.Fatalf("图片未下载：%v", err)
 	}
 
-	// 二次同步：全部跳过，不重复下载
+	// 二次同步：仅 .strm 跳过计数（伴随文件跳过不再计入），不重复下载
 	fetchCount.Store(0)
 	created, updated, _, skipped, err := rt.strmSvc.syncMapping(fp, st, cfg, mapping, 0, nil)
 	if err != nil {
 		t.Fatalf("二次同步失败：%v", err)
 	}
-	if created != 0 || updated != 0 || skipped != 3 {
-		t.Fatalf("二次同步应全部跳过：created=%d updated=%d skipped=%d", created, updated, skipped)
+	if created != 0 || updated != 0 || skipped != 1 {
+		t.Fatalf("二次同步应仅 strm 跳过：created=%d updated=%d skipped=%d", created, updated, skipped)
 	}
 	if n := fetchCount.Load(); n != 0 {
 		t.Fatalf("增量同步不应重复下载，实际 %d 次", n)
 	}
 
-	// 字幕在网盘更新（大小变化）→ 重新下载（updated）
+	// 字幕在网盘更新（大小变化）→ 重新下载；updated 计数不含伴随文件，用下载次数断言
 	fp.replacePickCode(sub.ID, "sub123def456ghi78", 4096)
-	_, updated, _, _, err = rt.strmSvc.syncMapping(fp, st, cfg, mapping, 0, nil)
+	fetchCount.Store(0)
+	_, _, _, _, err = rt.strmSvc.syncMapping(fp, st, cfg, mapping, 0, nil)
 	if err != nil {
 		t.Fatalf("三次同步失败：%v", err)
 	}
-	if updated != 1 {
-		t.Fatalf("字幕更新应产生 updated，实际 %d", updated)
+	if n := fetchCount.Load(); n != 1 {
+		t.Fatalf("字幕更新应重新下载 1 次，实际 %d", n)
 	}
 
 	// 网盘删除字幕 → 同步清理本地字幕（.strm 保留）
@@ -637,8 +639,10 @@ func TestSyncSidecarFlow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("清理同步失败：%v", err)
 	}
-	if removed != 1 || skipped != 2 {
-		t.Fatalf("应清理 1 条字幕记录：removed=%d skipped=%d created=%d updated=%d", removed, skipped, created, updated)
+	// 统计不含伴随文件的清理（removed 应为 0）；skipped=1 是 .strm 自身；
+	// 实际清理效果用文件断言（下方 srt 应消失、strm 应保留）
+	if removed != 0 || skipped != 1 || created != 0 || updated != 0 {
+		t.Fatalf("统计异常：removed=%d skipped=%d created=%d updated=%d", removed, skipped, created, updated)
 	}
 	if _, err := os.Stat(filepath.Join(localRoot, "流浪地球 2 (2023)", "流浪地球 2.zh-CN.srt")); !os.IsNotExist(err) {
 		t.Fatalf("本地字幕应被清理")
@@ -871,7 +875,7 @@ func TestSweepOrphanStrmFiles(t *testing.T) {
 	if _, _, _, _, err := rt.strmSvc.syncMapping(fp, st, cfg, newMapping, runID, nil); err != nil {
 		t.Fatalf("新位置同步失败：%v", err)
 	}
-	if orphans := rt.strmSvc.sweepOrphanStrmFiles(st, []config.StrmMapping{newMapping}, runID); orphans != 1 {
+	if orphans := rt.strmSvc.sweepOrphanStrmFiles(st, cfg, []config.StrmMapping{newMapping}, runID); orphans != 1 {
 		t.Fatalf("应清理 1 条孤儿，got %d", orphans)
 	}
 	if st.CountStrmFiles() != 1 {
