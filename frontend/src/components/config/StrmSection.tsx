@@ -151,7 +151,7 @@ export default function StrmSection({ cfg, set }: ConfigSectionProps) {
       </FieldGroup>
 
       <div className="text-xs leading-6 text-muted-foreground">
-        <p>.strm 内容形如 <code className="rounded bg-muted px-1 font-mono">http://服务地址/strm/redirect?pickcode=...</code>，播放时实时向 115 换取直链（直链与播放器 User-Agent 绑定，服务端自动透传并缓存）。</p>
+        <p>.strm 内容形如 <code className="rounded bg-muted px-1 font-mono">http://服务地址/strm/{"{pickcode}"}/文件名.mkv</code>，播放时实时向 115 换取直链（直链与播放器 User-Agent 绑定，服务端自动透传并缓存；文件名置于路径末尾，媒体服务器凭扩展名免探测识别格式）。</p>
         <p className="mt-1">触发方式：整理入库成功后自动生成 + 定时增量同步 + 本页保存后到「STRM 同步」页手动触发。开启「同步后通知 Plex」后，同步有增/改/删会自动通知 Plex 扫库。将本地 STRM 目录作为媒体库加入 Emby / Jellyfin / Infuse 即可播放。</p>
       </div>
     </ConfigCard>

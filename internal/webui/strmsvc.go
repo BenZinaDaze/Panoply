@@ -146,17 +146,18 @@ func StrmSign(urlSecret, pickCode string) string {
 	return hex.EncodeToString(sum[:])[:32]
 }
 
-// BuildStrmURL 构造写入 .strm 的播放地址。
-// 携带 file_name 让播放器/媒体服务器无需读取文件体即可识别扩展名（pickname 格式）。
-// pickcode 统一转小写，与服务端 302 校验（先 lowercase 再验签）保持一致。
+// BuildStrmURL 构造写入 .strm 的播放地址：/strm/{pickcode}/{文件名}?sign=...。
+// 文件名放路径末尾，媒体服务器凭路径扩展名即可免探测识别容器格式
+// （Emby 等不解析 query 参数，格式信息必须落在路径上）；
+// pickcode 供服务端换取 115 直链，统一转小写，与 302 验签逻辑保持一致。
 func BuildStrmURL(urlBase, urlSecret, pickCode, fileName string) string {
 	pickCode = strings.ToLower(strings.TrimSpace(pickCode))
-	u := strings.TrimRight(urlBase, "/") + "/strm/redirect?pickcode=" + url.QueryEscape(pickCode)
+	u := strings.TrimRight(urlBase, "/") + "/strm/" + pickCode
 	if fileName != "" {
-		u += "&file_name=" + url.QueryEscape(fileName)
+		u += "/" + url.PathEscape(fileName)
 	}
 	if urlSecret != "" {
-		u += "&sign=" + StrmSign(urlSecret, pickCode)
+		u += "?sign=" + StrmSign(urlSecret, pickCode)
 	}
 	return u
 }

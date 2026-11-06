@@ -171,8 +171,12 @@ func (s *Server) registerRoutes() {
 	m.HandleFunc("GET /api/ingest/recent", s.handleIngestRecent)
 
 	// strm（STRM 生成 + 302 直链播放）
-	// /strm/redirect 非 /api 前缀，播放器无需 JWT，由 url_secret 签名可选防护
+	// /strm/* 非 /api 前缀，播放器无需 JWT，由 url_secret 签名可选防护。
+	// 新格式 /strm/{pickcode}/{文件名}（路径带扩展名，媒体服务器免探测识别格式）；
+	// 旧格式 /strm/redirect query 传参保留，兼容存量 .strm，同步重写后自然淘汰。
 	m.HandleFunc(strmRedirectPath, s.handleStrmRedirect)
+	m.HandleFunc("/strm/{pickcode}", s.handleStrmRedirect)
+	m.HandleFunc("/strm/{pickcode}/{name...}", s.handleStrmRedirect)
 	m.HandleFunc("GET /api/strm/sync/status", s.handleStrmSyncStatus)
 	m.HandleFunc("POST /api/strm/sync", s.handleStrmSyncTrigger)
 	m.HandleFunc("GET /api/strm/sync/runs", s.handleStrmSyncRuns)

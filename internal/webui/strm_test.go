@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -108,9 +109,9 @@ func testStrmConfig() *config.Config {
 }
 
 func TestBuildStrmURL(t *testing.T) {
-	// 大写 pickcode 应统一转小写（与服务端验签逻辑一致）
+	// 大写 pickcode 应统一转小写（与服务端验签逻辑一致）；文件名放路径末尾供免探测识别扩展名
 	u := BuildStrmURL("http://host:38765/", "", "Abc123DEF456ghi78", "电影.mkv")
-	want := "http://host:38765/strm/redirect?pickcode=abc123def456ghi78&file_name=" + "%E7%94%B5%E5%BD%B1.mkv"
+	want := "http://host:38765/strm/abc123def456ghi78/" + "%E7%94%B5%E5%BD%B1.mkv"
 	if u != want {
 		t.Fatalf("BuildStrmURL = %q, want %q", u, want)
 	}
@@ -185,6 +186,76 @@ func TestHandleStrmRedirectBadParams(t *testing.T) {
 	testServer(rt).handleStrmRedirect(rr, req)
 	if rr.Code != http.StatusForbidden {
 		t.Fatalf("签名错误应 403，得到 %d", rr.Code)
+	}
+}
+
+func TestHandleStrmRedirectPathFormat(t *testing.T) {
+	rt := initStrmTestRuntime(t, "s3cret")
+	pickCode := "abc123def456ghi78"
+	rt.strmSvc.strmLinkCache.set(pickCode, "test-ua",
+		"https://cdn.115.com/x/%E7%94%B5%E5%BD%B1.mkv?t="+strconv.FormatInt(time.Now().Unix()+7200, 10), time.Now().Add(time.Hour))
+	// 走完整 mux + 认证中间件：路径通配路由与 PathValue 解析只有经 mux 才生效
+	srv := testServer(rt)
+	srv.mux = http.NewServeMux()
+	srv.registerRoutes()
+	handler := srv.Handler()
+
+	// 新路径格式 /strm/{pickcode}/{文件名}?sign=：缓存命中 302，Content-Disposition 带直链内嵌真名
+	sign := StrmSign("s3cret", pickCode)
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet,
+		"/strm/"+pickCode+"/"+url.PathEscape("电影 第二季 - S01E01.mkv")+"?sign="+sign, nil)
+	req.Header.Set("User-Agent", "test-ua")
+	handler.ServeHTTP(rr, req)
+	if rr.Code != http.StatusFound {
+		t.Fatalf("路径格式缓存命中应 302，得到 %d", rr.Code)
+	}
+	if cd := rr.Header().Get("Content-Disposition"); !strings.Contains(cd, "mkv") {
+		t.Fatalf("Content-Disposition 异常：%q", cd)
+	}
+
+	// 路径中的无效 pickcode 应 400
+	rr = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodGet, "/strm/short/电影.mkv", nil)
+	handler.ServeHTTP(rr, req)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("路径无效 pickcode 应 400，得到 %d", rr.Code)
+	}
+
+	// 签名失败：播放日志应记录路径中的文件名（旧格式从 query 取，新格式取自路径）
+	rr = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodGet,
+		"/strm/"+pickCode+"/"+url.PathEscape("电影 第二季 - S01E01.mkv")+"?sign=bad", nil)
+	handler.ServeHTTP(rr, req)
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("错误签名应 403，得到 %d", rr.Code)
+	}
+	st := rt.GetStrmStore()
+	if st == nil {
+		t.Fatalf("STRM 存储不可用")
+	}
+	var logs []store.StrmPlaybackLog
+	for i := 0; i < 50; i++ {
+		logs, _ = st.ListPlaybackLogs(10, 0)
+		if len(logs) >= 2 {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if len(logs) != 2 {
+		t.Fatalf("应记录 2 条播放日志（302 + 403），实际 %d", len(logs))
+	}
+	var forbidden *store.StrmPlaybackLog
+	for i := range logs {
+		if logs[i].Status == http.StatusForbidden {
+			forbidden = &logs[i]
+		}
+	}
+	if forbidden == nil {
+		t.Fatalf("应存在 403 日志：%+v", logs)
+	}
+	if forbidden.FileName == nil || *forbidden.FileName != "电影 第二季 - S01E01.mkv" {
+		t.Fatalf("403 日志应记录路径文件名：%v", forbidden.FileName)
 	}
 }
 
@@ -422,11 +493,11 @@ func TestSyncMappingFlow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("strm 未生成：%v", err)
 	}
-	if !strings.Contains(string(data), "/strm/redirect?pickcode=abc123def456ghi78") {
-		t.Fatalf("strm 内容异常：%q", string(data))
+	if !strings.Contains(string(data), "/strm/abc123def456ghi78/") {
+		t.Fatalf("strm 内容应为路径格式：%q", string(data))
 	}
-	if !strings.Contains(string(data), "file_name=") {
-		t.Fatalf("strm 应携带 file_name：%q", string(data))
+	if want := BuildStrmURL(cfg.Strm.URLBase, cfg.Strm.URLSecret, "abc123def456ghi78", "流浪地球 2.mkv"); strings.TrimSpace(string(data)) != want {
+		t.Fatalf("strm 内容异常：got %q, want %q", string(data), want)
 	}
 
 	// 二次同步：全部跳过
@@ -436,6 +507,26 @@ func TestSyncMappingFlow(t *testing.T) {
 	}
 	if created != 0 || updated != 0 || removed != 0 || skipped != 1 {
 		t.Fatalf("二次同步应全部跳过：created=%d updated=%d removed=%d skipped=%d", created, updated, removed, skipped)
+	}
+
+	// 旧 query 格式的存量 .strm：内容比对不一致，下一轮同步自动重写为新格式
+	oldURL := cfg.Strm.URLBase + "/strm/redirect?pickcode=abc123def456ghi78&file_name=" + url.PathEscape("流浪地球 2.mkv")
+	if err := os.WriteFile(strmPath, []byte(oldURL+"\n"), 0o644); err != nil {
+		t.Fatalf("写入旧格式 strm 失败：%v", err)
+	}
+	created, updated, _, _, err = rt.strmSvc.syncMapping(fp, st, cfg, mapping, 0, nil)
+	if err != nil {
+		t.Fatalf("旧格式重写同步失败：%v", err)
+	}
+	if created != 0 || updated != 1 {
+		t.Fatalf("旧格式 strm 应被重写：created=%d updated=%d", created, updated)
+	}
+	data, err = os.ReadFile(strmPath)
+	if err != nil {
+		t.Fatalf("重写后读取失败：%v", err)
+	}
+	if strings.Contains(string(data), "/strm/redirect") {
+		t.Fatalf("旧格式应已淘汰：%q", string(data))
 	}
 
 	// pick_code 变化（网盘重新上传）：应重写

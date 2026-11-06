@@ -6,7 +6,8 @@
 //   - 直链有效期由返回 URL 的 t 参数（unix 时间戳）决定，按 t-5min 缓存（key = pick_code + UA）；
 //   - pick_code 本身永久有效（文件移动/改名不变），直链过期后按需重新获取即可。
 //
-// 路由注册在非 /api 前缀（/strm/redirect），天然豁免 JWT（播放器无法携带请求头）；
+// 路由注册在非 /api 前缀（/strm/{pickcode}/{文件名}，旧版 /strm/redirect query 格式兼容），
+// 天然豁免 JWT（播放器无法携带请求头）；
 // 防滥用通过可选的 strm.url_secret 签名（HMAC 语义的 sha256 截断，常量时间比对）。
 package webui
 
@@ -26,7 +27,7 @@ import (
 	"panoply/internal/u115"
 )
 
-// strmRedirectPath 302 跳转路由（GET/HEAD/POST 均支持，媒体服务器行为不一）。
+// strmRedirectPath 旧版 302 跳转路由（query 传参，兼容存量 .strm，GET/HEAD/POST 均支持）。
 const strmRedirectPath = "/strm/redirect"
 
 // strmURLExpiryMargin 直链缓存安全边际：t 参数到期前 5 分钟即视为过期。
@@ -164,11 +165,23 @@ func (s *Server) handleStrmRedirect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	query := r.URL.Query()
-	pickCode := strings.ToLower(strings.TrimSpace(query.Get("pickcode")))
+	// 新格式 /strm/{pickcode}/{文件名}：pickcode 与文件名取自路径（PathValue 已解码）；
+	// 旧格式 /strm/redirect?pickcode=...&file_name=... 兼容存量 .strm，同步重写后自然淘汰。
+	pickCode := strings.ToLower(strings.TrimSpace(r.PathValue("pickcode")))
+	if pickCode == "" {
+		pickCode = strings.ToLower(strings.TrimSpace(query.Get("pickcode")))
+	}
 	if !pickCodeRe.MatchString(pickCode) {
 		// 无效参数非播放行为，不记录
 		writeJSONError(w, http.StatusBadRequest, "无效的 pickcode")
 		return
+	}
+	strmFileName := strings.TrimSpace(r.PathValue("name"))
+	if idx := strings.IndexByte(strmFileName, '/'); idx >= 0 {
+		strmFileName = strmFileName[:idx] // 网盘文件名不含 /，防御性截断
+	}
+	if strmFileName == "" {
+		strmFileName = strings.TrimSpace(strmFileName)
 	}
 
 	// 播放记录公共字段（UA 截断防御超长值）
@@ -198,7 +211,7 @@ func (s *Server) handleStrmRedirect(w http.ResponseWriter, r *http.Request) {
 		sign := query.Get("sign")
 		expect := StrmSign(cfg.Strm.URLSecret, pickCode)
 		if sign == "" || subtle.ConstantTimeCompare([]byte(sign), []byte(expect)) != 1 {
-			recordPlayback(false, http.StatusForbidden, "签名无效", query.Get("file_name"))
+			recordPlayback(false, http.StatusForbidden, "签名无效", strmFileName)
 			writeJSONError(w, http.StatusForbidden, "签名无效")
 			return
 		}
@@ -216,14 +229,14 @@ func (s *Server) handleStrmRedirect(w http.ResponseWriter, r *http.Request) {
 	// 失败负缓存：同一 pickcode 短时间内重复失败直接返回，不打 115
 	if neg, ok := s.strmNegativeGet(pickCode); ok {
 		w.Header().Set("Retry-After", "30")
-		recordPlayback(false, neg.status, neg.msg+"（负缓存）", query.Get("file_name"))
+		recordPlayback(false, neg.status, neg.msg+"（负缓存）", strmFileName)
 		writeJSONError(w, neg.status, neg.msg+"（近期失败，请稍后重试）")
 		return
 	}
 
 	client := s.rt.GetU115Client()
 	if client == nil {
-		recordPlayback(false, http.StatusServiceUnavailable, "115 客户端不可用", query.Get("file_name"))
+		recordPlayback(false, http.StatusServiceUnavailable, "115 客户端不可用", strmFileName)
 		writeJSONError(w, http.StatusServiceUnavailable, "115 客户端不可用，请先完成授权")
 		return
 	}
@@ -242,14 +255,14 @@ func (s *Server) handleStrmRedirect(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			status, detail := s.strmUpstreamError(err)
 			s.strmNegativeSet(pickCode, status, detail)
-			recordPlayback(false, status, detail, query.Get("file_name"))
+			recordPlayback(false, status, detail, strmFileName)
 			s.writeStrmUpstreamError(w, err)
 			return
 		}
 		expires := directURLExpiry(rawURL)
 		s.rt.strmSvc.strmLinkCache.set(pickCode, ua, rawURL, expires)
 
-		fileName := query.Get("file_name")
+		fileName := strmFileName
 		if fileName == "" {
 			fileName = urlFileName(rawURL)
 		}
@@ -259,7 +272,7 @@ func (s *Server) handleStrmRedirect(w http.ResponseWriter, r *http.Request) {
 
 	case <-time.After(s.rt.strmSvc.strmFetchWait):
 		w.Header().Set("Retry-After", "10")
-		recordPlayback(false, http.StatusServiceUnavailable, "直链获取排队超时", query.Get("file_name"))
+		recordPlayback(false, http.StatusServiceUnavailable, "直链获取排队超时", strmFileName)
 		writeJSONError(w, http.StatusServiceUnavailable, "直链获取排队超时（扫描限流中），请稍后重试")
 	}
 }
