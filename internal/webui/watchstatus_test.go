@@ -39,9 +39,9 @@ func TestAggregateWatchStates(t *testing.T) {
 		{Type: "tv", TVDBID: 777, Season: 1, Episode: 1}: watchedState(true),
 		{Type: "tv", TVDBID: 888, Season: 1, Episode: 1}: watchedState(true),
 		// movie：看过注入、没看跳过、缺 tmdb 锚跳过
-		{Type: "movie", TMDBID: 200}:                     watchedState(true),
-		{Type: "movie", TMDBID: 201}:                     watchedState(false),
-		{Type: "movie", TMDBID: 0, TVDBID: 999}:          watchedState(true),
+		{Type: "movie", TMDBID: 200}:            watchedState(true),
+		{Type: "movie", TMDBID: 201}:            watchedState(false),
+		{Type: "movie", TMDBID: 0, TVDBID: 999}: watchedState(true),
 	}
 	agg := aggregateWatchStates(states, mapper)
 	if got := agg["tv:100"].watchedEpisodes; got != 3 {
@@ -79,19 +79,19 @@ func newAnnotatedSvc(agg map[string]watchAgg) *watchStatusService {
 
 func TestAnnotate(t *testing.T) {
 	svc := newAnnotatedSvc(map[string]watchAgg{
-		"tv:100":     {watchedEpisodes: 3},
-		"movie:200":  {watched: true},
-		"movie:201":  {}, // 电影未看：不应注入
+		"tv:100":    {watchedEpisodes: 3},
+		"movie:200": {watched: true},
+		"movie:201": {}, // 电影未看：不应注入
 	})
 	rows := []map[string]any{
-		{"media_type": "tv", "tmdb_id": 100},                       // 命中 → 注入
-		{"media_type": "movie", "tmdb_id": 200},                     // 命中已看 → 注入
-		{"media_type": "movie", "tmdb_id": 201},                     // 命中未看 → 不注入
-		{"media_type": "tv", "tmdb_id": 999},                        // 无数据 → 不注入
-		{"media_type": "tv", "tmdb_id": 0},                          // 无 tmdb_id → 跳过
-		{"media_type": "tv", "tmdb_id": float64(100)},               // json 解码的 float64 → 命中
-		{"media_type": "unknown", "tmdb_id": 100},                   // 未知类型 → 不注入
-		{},                                                          // 空行 → 不 panic
+		{"media_type": "tv", "tmdb_id": 100},          // 命中 → 注入
+		{"media_type": "movie", "tmdb_id": 200},       // 命中已看 → 注入
+		{"media_type": "movie", "tmdb_id": 201},       // 命中未看 → 不注入
+		{"media_type": "tv", "tmdb_id": 999},          // 无数据 → 不注入
+		{"media_type": "tv", "tmdb_id": 0},            // 无 tmdb_id → 跳过
+		{"media_type": "tv", "tmdb_id": float64(100)}, // json 解码的 float64 → 命中
+		{"media_type": "unknown", "tmdb_id": 100},     // 未知类型 → 不注入
+		{}, // 空行 → 不 panic
 	}
 	svc.Annotate(rows)
 	if got := rows[0]["watched_episodes"]; got != 3 {
