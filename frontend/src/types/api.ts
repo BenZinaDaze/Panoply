@@ -78,6 +78,7 @@ export interface SubscriptionHit {
   season_number?: number
   episode_number?: number
   push_status?: string
+  push_error?: string | null
   created_at?: string
 }
 

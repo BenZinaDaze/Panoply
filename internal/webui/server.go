@@ -130,6 +130,7 @@ func (s *Server) registerRoutes() {
 	m.HandleFunc("PUT /api/subscriptions/{subscriptionID}", s.handleUpdateSubscription)
 	m.HandleFunc("DELETE /api/subscriptions/{subscriptionID}", s.handleDeleteSubscription)
 	m.HandleFunc("POST /api/subscriptions/{subscriptionID}", s.handleSubscriptionPostOp)
+	m.HandleFunc("POST /api/subscriptions/{subscriptionID}/hits/{hitID}", s.handleRepushSubscriptionHit)
 
 	// u115 (OAuth + 云下载)
 	m.HandleFunc("GET /api/u115/oauth/status", s.handleU115OauthStatus)

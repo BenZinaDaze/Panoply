@@ -375,7 +375,10 @@ func (rt *Runtime) checkSubscriptionRecord(rssStore *store.RSSStore, record *sto
 	effective, _ := result["effective_matches"].([]map[string]any)
 	for _, item := range effective {
 		dedupe := item["dedupe_key"].(string)
-		if rssStore.HitExists(record.ID, dedupe) {
+		// 仅推送成功的记录视为已处理；failed 的下轮自动重试（提交失败多为瞬态：
+		// 115 限流/授权/网络抖动），推送成功后任务侧失败由手动重推兜底，不会循环。
+		existing := rssStore.GetHitByDedupe(record.ID, dedupe)
+		if existing != nil && existing.PushStatus == "success" {
 			skipped++
 			continue
 		}
@@ -388,16 +391,25 @@ func (rt *Runtime) checkSubscriptionRecord(rssStore *store.RSSStore, record *sto
 			"pushed_to": record.PushTarget,
 		}
 		if err := rt.pushItem(record.PushTarget, item); err != nil {
-			hitPayload["push_status"] = "failed"
-			hitPayload["push_error"] = err.Error()
-			_, _ = rssStore.RecordHit(hitPayload)
+			if existing != nil {
+				rssStore.UpdateHitPush(existing.ID, "failed", err.Error())
+			} else {
+				hitPayload["push_status"] = "failed"
+				hitPayload["push_error"] = err.Error()
+				_, _ = rssStore.RecordHit(hitPayload)
+			}
 			pushErrors = append(pushErrors, err.Error())
 			rt.reportSubscriptionPushHealth(err)
 			continue
 		}
-		hitPayload["push_status"] = "success"
-		if _, err := rssStore.RecordHit(hitPayload); err == nil {
+		if existing != nil {
+			rssStore.UpdateHitPush(existing.ID, "success", "") // 已有记录原地更新，避免撞 dedupe 唯一索引
 			pushed++
+		} else {
+			hitPayload["push_status"] = "success"
+			if _, err := rssStore.RecordHit(hitPayload); err == nil {
+				pushed++
+			}
 		}
 	}
 
@@ -815,6 +827,50 @@ func (s *Server) handleSubscriptionPostOp(w http.ResponseWriter, r *http.Request
 		return
 	}
 	writeJSONError(w, http.StatusNotFound, "未知操作")
+}
+
+// handleRepushSubscriptionHit POST /api/subscriptions/{id}/hits/{hitID} 重推一条命中。
+// 用命中记录里已持久化的下载地址即时重推（云下载任务失败被删后重下、手动删库文件重下等
+// 场景），结果原地更新该记录的 push_status。
+func (s *Server) handleRepushSubscriptionHit(w http.ResponseWriter, r *http.Request) {
+	rssStore := s.rt.GetRSSStore()
+	id, err := subscriptionIDFromPath(r)
+	if err != nil {
+		writeJSONError(w, http.StatusBadRequest, "subscription_id 无效")
+		return
+	}
+	hitID, err := strconv.ParseInt(r.PathValue("hitID"), 10, 64)
+	if err != nil {
+		writeJSONError(w, http.StatusBadRequest, "hit_id 无效")
+		return
+	}
+	record, _ := rssStore.GetSubscription(id)
+	if record == nil {
+		writeJSONError(w, http.StatusNotFound, "订阅不存在")
+		return
+	}
+	hit, _ := rssStore.GetHit(hitID)
+	if hit == nil || hit.SubscriptionID != id {
+		writeJSONError(w, http.StatusNotFound, "命中记录不存在")
+		return
+	}
+	item := map[string]any{
+		"magnet_url": derefStr(hit.MagnetURL), "torrent_url": derefStr(hit.TorrentURL),
+	}
+	if err := s.rt.pushItem(record.PushTarget, item); err != nil {
+		rssStore.UpdateHitPush(hit.ID, "failed", err.Error())
+		s.rt.reportSubscriptionPushHealth(err)
+		writeJSONError(w, http.StatusBadGateway, "重推失败："+err.Error())
+		return
+	}
+	rssStore.UpdateHitPush(hit.ID, "success", "")
+	s.rt.appLog("subscription", "repushed", "SUCCESS", "已重推订阅命中："+hit.EpisodeTitle, map[string]any{
+		"subscription_id": id, "hit_id": hit.ID,
+	})
+	refreshed, _ := rssStore.GetSubscription(id)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok": true, "subscription": s.serializeSubscription(rssStore, refreshed),
+	})
 }
 
 // rt.subscriptionTmdbCachePrefetching 防止列表并发重复拉取详情。

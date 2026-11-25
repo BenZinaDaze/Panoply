@@ -179,8 +179,23 @@ func TestRSSStoreFlow(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if !s.HitExists(sub.ID, "s1e2") {
-		t.Error("hit 应存在")
+	hit := s.GetHitByDedupe(sub.ID, "s1e2")
+	if hit == nil || hit.PushStatus != "success" || hit.PushError != nil {
+		t.Fatalf("hit = %+v", hit)
+	}
+	// 推送状态原地更新（重推/自动重试路径）：failed 记错误，success 清空
+	if !s.UpdateHitPush(hit.ID, "failed", "boom") {
+		t.Error("UpdateHitPush 应命中行")
+	}
+	if hit := s.GetHitByDedupe(sub.ID, "s1e2"); hit == nil || hit.PushStatus != "failed" ||
+		hit.PushError == nil || *hit.PushError != "boom" {
+		t.Fatalf("failed hit = %+v", hit)
+	}
+	if !s.UpdateHitPush(hit.ID, "success", "") {
+		t.Error("UpdateHitPush 应命中行")
+	}
+	if hit := s.GetHitByDedupe(sub.ID, "s1e2"); hit == nil || hit.PushStatus != "success" || hit.PushError != nil {
+		t.Fatalf("success hit = %+v", hit)
 	}
 	if _, err := s.RecordHit(map[string]any{
 		"subscription_id": sub.ID, "episode_title": "重复",

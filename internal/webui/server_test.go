@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -871,6 +872,14 @@ func TestPushTorrentLinkAddsBTTask(t *testing.T) {
 // ── RSS 订阅端到端 ─────────────────────────────────────────
 
 func newSubscriptionTestServer(t *testing.T) (*httptest.Server, string, *Runtime) {
+	ts, token, rt, _ := newSubscriptionTestServerSwitchable(t)
+	return ts, token, rt
+}
+
+// newSubscriptionTestServerSwitchable 在 newSubscriptionTestServer 基础上返回
+// 假 115 推送接口的失败开关（置 true 后 add_task_urls 返回业务失败，
+// 供重推与 failed 自动重试测试切换）。
+func newSubscriptionTestServerSwitchable(t *testing.T) (*httptest.Server, string, *Runtime, func(bool)) {
 	t.Helper()
 	// mock mikan RSS 站点
 	mikanServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -891,8 +900,13 @@ func newSubscriptionTestServer(t *testing.T) (*httptest.Server, string, *Runtime
 	}))
 	t.Cleanup(mikanServer.Close)
 
-	// mock 115 API（add_task_urls 接收推送）
+	// mock 115 API（add_task_urls 接收推送；失败开关打开时返回业务失败）
+	var pushFail atomic.Bool
 	u115Server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if pushFail.Load() && strings.Contains(r.URL.Path, "/open/offline/add_task_urls") {
+			json.NewEncoder(w).Encode(map[string]any{"state": false, "message": "mock 推送失败"})
+			return
+		}
 		json.NewEncoder(w).Encode(map[string]any{"state": true, "code": 0,
 			"data": []any{map[string]any{"state": true, "code": 0, "message": "ok"}}})
 	}))
@@ -924,7 +938,7 @@ func newSubscriptionTestServer(t *testing.T) (*httptest.Server, string, *Runtime
 	ts := httptest.NewServer(server.Handler())
 	t.Cleanup(ts.Close)
 	_, out := login(t, ts, "admin", "secret123")
-	return ts, out["token"].(string), rt
+	return ts, out["token"].(string), rt, pushFail.Store
 }
 
 func authedRequest(t *testing.T, ts *httptest.Server, token, method, path string, body any) (int, map[string]any) {
@@ -1052,6 +1066,115 @@ func TestSubscriptionCRUDAndCheck(t *testing.T) {
 
 func mikanTestRSSURL(_ *httptest.Server) string {
 	return "https://mikanani.me/RSS/Bangumi?bangumiId=3065"
+}
+
+// TestSubscriptionRepushHitAndAutoRetry 覆盖：推送提交失败落库 failed → 手动重推
+// （失败 502 / 成功翻转 success）→ success 去重跳过 → failed 下轮自动重试 → 跨订阅越权 404。
+func TestSubscriptionRepushHitAndAutoRetry(t *testing.T) {
+	ts, token, rt, setPushFail := newSubscriptionTestServerSwitchable(t)
+	rssURL := mikanTestRSSURL(ts)
+
+	createBody := map[string]any{
+		"name": "测试剧 [GroupX]", "media_title": "测试剧", "media_type": "tv",
+		"site": "mikan", "rss_url": rssURL, "subgroup_name": "GroupX",
+		"season_number": 1, "start_episode": 2, "keyword_all": []string{"GroupX"},
+		"push_target": "u115", "enabled": true,
+	}
+	code, created := authedRequest(t, ts, token, "POST", "/api/subscriptions", createBody)
+	if code != 200 || created["ok"] != true {
+		t.Fatalf("create = %d %v", code, created)
+	}
+	subID := int64(1)
+
+	firstHit := func() *store.HitRecord {
+		hits := rt.GetRSSStore().ListHits(subID, 5)
+		if len(hits) == 0 {
+			t.Fatal("recent_hits 为空")
+		}
+		return hits[0]
+	}
+
+	// 1. 推送提交失败 → hit 落库 failed 且带错误
+	setPushFail(true)
+	code, checked := authedRequest(t, ts, token, "POST",
+		fmt.Sprintf("/api/subscriptions/%d:check", subID), nil)
+	if code != 200 {
+		t.Fatalf("check = %d %v", code, checked)
+	}
+	if result := checked["result"].(map[string]any); result["pushed"] != float64(0) {
+		t.Errorf("result = %v (推送失败不应计数)", result)
+	}
+	hit := firstHit()
+	if hit.PushStatus != "failed" || hit.PushError == nil || *hit.PushError == "" {
+		t.Fatalf("hit = %+v (应 failed 且带 push_error)", hit)
+	}
+
+	// 2. 手动重推仍失败 → 502，状态保持 failed
+	code, _ = authedRequest(t, ts, token, "POST",
+		fmt.Sprintf("/api/subscriptions/%d/hits/%d", subID, hit.ID), nil)
+	if code != 502 {
+		t.Errorf("repush code = %d, want 502", code)
+	}
+	if hit := firstHit(); hit.PushStatus != "failed" {
+		t.Errorf("hit = %+v (应保持 failed)", hit)
+	}
+
+	// 3. 恢复 115 → 手动重推成功，hit 翻转 success
+	setPushFail(false)
+	code, repushed := authedRequest(t, ts, token, "POST",
+		fmt.Sprintf("/api/subscriptions/%d/hits/%d", subID, hit.ID), nil)
+	if code != 200 || repushed["ok"] != true {
+		t.Fatalf("repush = %d %v", code, repushed)
+	}
+	if hit := firstHit(); hit.PushStatus != "success" || hit.PushError != nil {
+		t.Fatalf("hit = %+v (应翻转 success 且清空 push_error)", hit)
+	}
+
+	// 4. success 后再检查 → 去重跳过
+	_, checked2 := authedRequest(t, ts, token, "POST",
+		fmt.Sprintf("/api/subscriptions/%d:check", subID), nil)
+	if result := checked2["result"].(map[string]any); result["pushed"] != float64(0) ||
+		result["skipped"] != float64(1) {
+		t.Errorf("result2 = %v (应去重跳过)", result)
+	}
+
+	// 5. failed 的 hit 下轮自动重试成功（提交失败自愈）
+	if !rt.GetRSSStore().UpdateHitPush(hit.ID, "failed", "再次失败") {
+		t.Fatal("UpdateHitPush 未命中")
+	}
+	code, checked3 := authedRequest(t, ts, token, "POST",
+		fmt.Sprintf("/api/subscriptions/%d:check", subID), nil)
+	if code != 200 {
+		t.Fatalf("check3 = %d %v", code, checked3)
+	}
+	if result := checked3["result"].(map[string]any); result["pushed"] != float64(1) {
+		t.Errorf("result3 = %v (failed 应自动重试并计数)", result)
+	}
+	if hit := firstHit(); hit.PushStatus != "success" {
+		t.Errorf("hit = %+v (自动重试后应 success)", hit)
+	}
+
+	// 6. 跨订阅越权与不存在 → 404
+	otherBody := map[string]any{
+		"name": "测试剧 [GroupX] 第3集起", "media_title": "测试剧", "media_type": "tv",
+		"site": "mikan", "rss_url": rssURL, "subgroup_name": "GroupX",
+		"season_number": 1, "start_episode": 3, "keyword_all": []string{"GroupX"},
+		"push_target": "u115", "enabled": true,
+	}
+	code, _ = authedRequest(t, ts, token, "POST", "/api/subscriptions", otherBody)
+	if code != 200 {
+		t.Fatal("创建第二订阅失败")
+	}
+	code, _ = authedRequest(t, ts, token, "POST",
+		fmt.Sprintf("/api/subscriptions/%d/hits/%d", 2, hit.ID), nil)
+	if code != 404 {
+		t.Errorf("越权重推 code = %d, want 404", code)
+	}
+	code, _ = authedRequest(t, ts, token, "POST",
+		fmt.Sprintf("/api/subscriptions/%d/hits/999", subID), nil)
+	if code != 404 {
+		t.Errorf("不存在命中 code = %d, want 404", code)
+	}
 }
 
 // 同一部剧多个译名目录 → 刷新后集数聚合(令和的斑小姐场景)

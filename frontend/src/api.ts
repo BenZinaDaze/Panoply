@@ -112,6 +112,8 @@ export const parseSubscriptionRss = (rss_url: string) =>
   api.post('/subscriptions:parse-rss', { rss_url })
 export const checkSubscription = (id: number) =>
   api.post(`/subscriptions/${id}:check`)
+export const repushSubscriptionHit = (subId: number, hitId: number) =>
+  api.post(`/subscriptions/${subId}/hits/${hitId}`)
 
 // ── 配置 ──
 export const getConfig = () => api.get('/config')

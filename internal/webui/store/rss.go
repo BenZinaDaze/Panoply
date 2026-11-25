@@ -720,13 +720,29 @@ func (s *RSSStore) GetHit(id int64) (*HitRecord, error) {
 	return scanHit(s.db.QueryRow(hitSelect+" WHERE id = ?", id)), nil
 }
 
-// HitExists 命中是否已存在。
-func (s *RSSStore) HitExists(subscriptionID int64, dedupeKey string) bool {
-	var one int
-	err := s.db.QueryRow(
-		"SELECT 1 FROM rss_subscription_hits WHERE subscription_id = ? AND dedupe_key = ? LIMIT 1",
-		subscriptionID, dedupeKey).Scan(&one)
-	return err == nil
+// GetHitByDedupe 按去重键取命中（不存在返回 nil）。
+// 轮询去重与失败重试依据：仅 push_status = success 的记录视为已处理。
+func (s *RSSStore) GetHitByDedupe(subscriptionID int64, dedupeKey string) *HitRecord {
+	return scanHit(s.db.QueryRow(
+		hitSelect+" WHERE subscription_id = ? AND dedupe_key = ? LIMIT 1",
+		subscriptionID, dedupeKey))
+}
+
+// UpdateHitPush 更新命中的推送状态（errMsg 为空时清掉 push_error），返回是否命中行。
+// 重推与 failed 自动重试成功后原地更新，避免撞 (subscription_id, dedupe_key) 唯一索引。
+func (s *RSSStore) UpdateHitPush(id int64, status, errMsg string) bool {
+	var errVal any
+	if errMsg != "" {
+		errVal = errMsg
+	}
+	res, err := s.db.Exec(
+		"UPDATE rss_subscription_hits SET push_status = ?, push_error = ? WHERE id = ?",
+		status, errVal, id)
+	if err != nil {
+		return false
+	}
+	n, _ := res.RowsAffected()
+	return n > 0
 }
 
 // ListHits 最近命中。

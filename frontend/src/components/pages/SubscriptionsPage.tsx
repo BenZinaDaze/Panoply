@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { RefreshCw, Pause, Play, Trash2, Edit, Rss, Plus } from 'lucide-react'
-import { checkSubscription, deleteSubscription, listSubscriptions, tmdbGetDetail, updateSubscription } from '@/api'
+import { checkSubscription, deleteSubscription, listSubscriptions, repushSubscriptionHit, tmdbGetDetail, updateSubscription } from '@/api'
 import BackToTopButton from '@/components/BackToTopButton'
 import { StatePanel } from '@/components/StatePanel'
 import { Button } from '@/components/ui/button'
@@ -18,7 +18,7 @@ import DetailModal from '@/components/modals/DetailModal'
 import SubscriptionModal from '@/components/modals/SubscriptionModal'
 import PageHeader from '@/components/shared/PageHeader'
 import { cn } from '@/lib/utils'
-import type { Subscription, MediaItem } from '@/types/api'
+import type { Subscription, SubscriptionHit, MediaItem } from '@/types/api'
 import { toast } from 'sonner'
 
 function TinyPill({ children, tone = 'default' }: { children: React.ReactNode; tone?: 'default' | 'success' | 'warning' | 'danger' }) {
@@ -104,7 +104,15 @@ function InfoBlock({ label, value, tone = 'default' }: { label: string; value: s
   )
 }
 
-function SubscriptionDetailContent({ item }: { item: Subscription }) {
+function SubscriptionDetailContent({
+  item,
+  onRepush,
+  repushLoading = '',
+}: {
+  item: Subscription
+  onRepush?: (hit: SubscriptionHit) => void
+  repushLoading?: string
+}) {
   return (
     <div className="grid gap-6">
       <section className="mb-1">
@@ -137,16 +145,35 @@ function SubscriptionDetailContent({ item }: { item: Subscription }) {
           <h3 className="mb-3 text-sm font-semibold">最近命中</h3>
           <div className="grid gap-2">
             {item.recent_hits.slice(0, 5).map((hit) => (
-              <div key={hit.id} className="rounded-xl border border-border/60 bg-muted/40 p-4">
-                <div className="text-sm font-semibold">{hit.episode_title}</div>
-                <div className="mt-1 text-xs text-muted-foreground">
-                  {[
-                    hit.season_number ? `S${String(hit.season_number).padStart(2, '0')}` : null,
-                    hit.episode_number ? `E${String(hit.episode_number).padStart(2, '0')}` : null,
-                    hit.push_status || null,
-                    hit.created_at ? new Date(hit.created_at).toLocaleString('zh-CN', { hour12: false }) : null,
-                  ].filter(Boolean).join(' · ')}
+              <div key={hit.id} className="flex items-center gap-3 rounded-xl border border-border/60 bg-muted/40 p-4">
+                <div className="min-w-0 flex-1">
+                  <div className="truncate text-sm font-semibold">{hit.episode_title}</div>
+                  <div className="mt-1 text-xs text-muted-foreground">
+                    {[
+                      hit.season_number ? `S${String(hit.season_number).padStart(2, '0')}` : null,
+                      hit.episode_number ? `E${String(hit.episode_number).padStart(2, '0')}` : null,
+                      hit.push_status === 'success' ? '已推送' : hit.push_status === 'failed' ? '推送失败' : (hit.push_status || null),
+                      hit.created_at ? new Date(hit.created_at).toLocaleString('zh-CN', { hour12: false }) : null,
+                    ].filter(Boolean).join(' · ')}
+                  </div>
+                  {hit.push_status === 'failed' && hit.push_error ? (
+                    <div className="mt-1 truncate text-xs text-destructive" title={hit.push_error}>
+                      {hit.push_error}
+                    </div>
+                  ) : null}
                 </div>
+                {onRepush ? (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => onRepush(hit)}
+                    disabled={repushLoading !== ''}
+                    className="shrink-0 gap-1.5"
+                  >
+                    <RefreshCw className={cn('size-3.5', repushLoading === `repush-${hit.id}` && 'animate-spin')} />
+                    {repushLoading === `repush-${hit.id}` ? '重推中…' : '重推'}
+                  </Button>
+                ) : null}
               </div>
             ))}
           </div>
@@ -180,9 +207,12 @@ export default function SubscriptionsPage({
     setError('')
     try {
       const res = await listSubscriptions()
-      setItems(res.data?.subscriptions || [])
+      const list: Subscription[] = res.data?.subscriptions || []
+      setItems(list)
+      return list
     } catch (err) {
       setError((err as { response?: { data?: { detail?: string } } })?.response?.data?.detail || '加载失败')
+      return []
     } finally {
       setLoading(false)
     }
@@ -263,6 +293,21 @@ export default function SubscriptionsPage({
       await loadData()
     } catch (err) {
       toast.error('检查失败', { description: (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail || '未知错误' })
+    } finally {
+      setDetailActionLoading('')
+    }
+  }
+
+  async function handleRepushHit(hit: SubscriptionHit) {
+    if (!selectedItem) return
+    setDetailActionLoading(`repush-${hit.id}`)
+    try {
+      await repushSubscriptionHit(selectedItem.id, hit.id)
+      toast.success('已重新推送', { description: hit.episode_title })
+      const list = await loadData()
+      setSelectedItem((prev) => (prev ? list.find((i) => i.id === prev.id) || prev : prev))
+    } catch (err) {
+      toast.error('重推失败', { description: (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail || '未知错误' })
     } finally {
       setDetailActionLoading('')
     }
@@ -383,7 +428,7 @@ export default function SubscriptionsPage({
               setSelectedDetail(null)
             }
           }}
-          contentSlot={<SubscriptionDetailContent item={selectedItem} />}
+          contentSlot={<SubscriptionDetailContent item={selectedItem} onRepush={handleRepushHit} repushLoading={detailActionLoading} />}
           footerSlot={
             <div className="flex flex-wrap items-center justify-end gap-2">
               <Button
