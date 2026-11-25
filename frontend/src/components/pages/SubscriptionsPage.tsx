@@ -143,9 +143,22 @@ function SubscriptionDetailContent({
       {item.recent_hits?.length ? (
         <section className="mt-1">
           <h3 className="mb-3 text-sm font-semibold">最近命中</h3>
-          <div className="grid gap-2">
+          <div className="grid grid-cols-1 gap-2">
             {item.recent_hits.slice(0, 5).map((hit) => (
-              <div key={hit.id} className="flex items-center gap-3 rounded-xl border border-border/60 bg-muted/40 p-4">
+              <div key={hit.id} className="flex items-start gap-2.5 rounded-xl border border-border/60 bg-muted/40 p-4">
+                {onRepush ? (
+                  <Button
+                    variant="ghost"
+                    size="icon-xs"
+                    title="重推"
+                    aria-label="重推"
+                    onClick={() => onRepush(hit)}
+                    disabled={repushLoading !== ''}
+                    className="mt-0.5 shrink-0"
+                  >
+                    <RefreshCw className={cn('size-3.5', repushLoading === `repush-${hit.id}` && 'animate-spin')} />
+                  </Button>
+                ) : null}
                 <div className="min-w-0 flex-1">
                   <div className="truncate text-sm font-semibold">{hit.episode_title}</div>
                   <div className="mt-1 text-xs text-muted-foreground">
@@ -162,18 +175,6 @@ function SubscriptionDetailContent({
                     </div>
                   ) : null}
                 </div>
-                {onRepush ? (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => onRepush(hit)}
-                    disabled={repushLoading !== ''}
-                    className="shrink-0 gap-1.5"
-                  >
-                    <RefreshCw className={cn('size-3.5', repushLoading === `repush-${hit.id}` && 'animate-spin')} />
-                    {repushLoading === `repush-${hit.id}` ? '重推中…' : '重推'}
-                  </Button>
-                ) : null}
               </div>
             ))}
           </div>
